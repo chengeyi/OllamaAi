@@ -26,7 +26,7 @@ const createWindow = () => {
     console.log('[Electron] 开发环境，加载:', startUrl)
   } else {
     // 生产环境：从应用的 dist 目录加载
-    const distPath = path.join(__dirname, '..', 'dist', 'index.html')
+    const distPath = path.join(app.getAppPath(), 'dist', 'index.html')
     startUrl = `file://${distPath}`
     console.log('[Electron] 生产环境，加载:', startUrl)
     console.log('[Electron] dist 目录:', path.join(__dirname, '..', 'dist'))
@@ -35,9 +35,11 @@ const createWindow = () => {
   console.log('[Electron] 加载 URL:', startUrl)
   mainWindow.loadURL(startUrl)
 
-  if (isDev) {
-    mainWindow.webContents.openDevTools()
-  }
+  // if (isDev) {
+  //   mainWindow.webContents.openDevTools()
+  // }
+
+  mainWindow.webContents.openDevTools()
 
   mainWindow.on('closed', () => {
     mainWindow = null
@@ -67,10 +69,12 @@ const startServer = () => {
       console.log('[Electron] 检查 package.json:', packageJsonPath)
       console.log('[Electron] 检查 node_modules:', nodeModulesPath)
       
-      serverProcess = spawn('npm', ['run', 'server'], {
-        cwd: appDir,
+      const serverScript = isDev
+        ? path.join(__dirname, '..', 'dist_electron', 'server.js')
+        : path.join(__dirname, 'server.js')
+
+      serverProcess = spawn(process.execPath, [serverScript], {
         stdio: 'inherit',
-        shell: true,
         env: {
           ...process.env,
           NODE_ENV: 'production',

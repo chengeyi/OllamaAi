@@ -6,10 +6,11 @@ directories:
 
 files:
   - dist/**/*
-  - dist_electron/**/*
+  - dist_electron/main.js
+  - dist_electron/preload.js
+  - dist_electron/server.js
   - node_modules/**/*
   - package.json
-  - server.ts
   - .env.local
 
 win:

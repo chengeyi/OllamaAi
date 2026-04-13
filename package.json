@@ -2,7 +2,6 @@
   "name": "vueai-chat",
   "private": true,
   "version": "1.0.0",
-  "type": "module",
   "main": "dist_electron/main.js",
   "scripts": {
     "dev": "vite",
@@ -12,7 +11,8 @@
     "preview": "vite preview",
     "electron": "NODE_ENV=development electron .",
     "electron-dev": "concurrently \"npm run server\" \"npm run vite\" \"wait-on http://localhost:5173 && npm run electron\"",
-    "electron-build": "npm run build && electron-builder"
+    "build:electron": "esbuild electron/main.ts electron/preload.ts server.ts --bundle --platform=node --outdir=dist_electron --format=cjs --external:electron --external:express --external:cors --external:dotenv --external:openai --external:@google/generative-ai",
+    "electron-build": "npm run build && npm run build:electron && electron-builder"
   },
   "dependencies": {
     "@google/generative-ai": "^0.24.1",
