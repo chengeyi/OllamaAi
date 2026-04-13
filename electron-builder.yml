@@ -1,0 +1,49 @@
+appId: com.vueai.chat
+productName: Vue AI Chat
+directories:
+  buildResources: assets
+  output: dist_electron
+
+files:
+  - dist/**/*
+  - dist_electron/**/*
+  - node_modules/**/*
+  - package.json
+  - server.ts
+  - .env.local
+
+win:
+  target:
+    - nsis
+    - portable
+  artifactName: '${productName}-${version}.${ext}'
+
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+
+mac:
+  target:
+    - dmg
+    - zip
+  artifactName: '${productName}-${version}.${ext}'
+  category: public.app-category.productivity
+
+dmg:
+  contents:
+    - x: 130
+      y: 220
+      type: file
+    - x: 380
+      y: 220
+      type: link
+      path: /Applications
+
+linux:
+  target:
+    - AppImage
+    - deb
+  artifactName: '${productName}-${version}.${ext}'
+  category: Office
