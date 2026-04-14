@@ -221,7 +221,6 @@ watch(
   }
 )
 
-const inputRef = ref<HTMLInputElement | null>(null)
 function handleSendMessage() {
   // inputRef.value?.blur()
   // 從 v-model 獲取輸入值
