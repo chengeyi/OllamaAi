@@ -9,7 +9,8 @@ const port = process.env.PORT || 3001
 
 // 中間件
 app.use(cors())
-app.use(express.json())
+app.use(express.json({ limit: '50mb' }))
+app.use(express.urlencoded({ limit: '50mb', extended: true }))
 
 // 簡體中文到繁體中文的映射表
 const simplified2Traditional: { [key: string]: string } = {
@@ -49,6 +50,7 @@ app.post('/api/chat', async (req, res) => {
     // 獲取最後一條使用者訊息
     const lastMessage = messages[messages.length - 1]
     const userMessage = lastMessage.content
+    const imageData = lastMessage.imageData // 取得圖片 Base64 數據
 
     // 組合對話歷史為提示
     const conversationHistory = messages
@@ -70,18 +72,33 @@ app.post('/api/chat', async (req, res) => {
       : `${systemPrompt}\n\nUser: ${userMessage}`
 
     try {
+      // 判斷是否有圖片，使用不同的 API 端點
+      let apiEndpoint = `${OLLAMA_API_URL}/api/generate`
+      let requestBody: any = {
+        model: OLLAMA_MODEL,
+        prompt: fullPrompt,
+        stream: false,
+        temperature: 0.7,
+      }
+
+      // 如果有圖片數據，添加到請求中
+      if (imageData) {
+        // 移除 Data URL 的前綴 (data:image/...;base64,)
+        const base64Image = imageData.includes(',') 
+          ? imageData.split(',')[1] 
+          : imageData
+        
+        requestBody.images = [base64Image]
+        console.log('📸 檢測到圖片，將發送給 AI 進行分析')
+      }
+
       // 呼叫 Ollama API
-      const response = await fetch(`${OLLAMA_API_URL}/api/generate`, {
+      const response = await fetch(apiEndpoint, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({
-          model: OLLAMA_MODEL,
-          prompt: fullPrompt,
-          stream: false,
-          temperature: 0.7,
-        })
+        body: JSON.stringify(requestBody)
       })
 
       if (!response.ok) {
@@ -100,6 +117,7 @@ app.post('/api/chat', async (req, res) => {
           success: true,
           message: traditionalResponse,
           model: OLLAMA_MODEL,
+          hasImage: !!imageData
         })
       } else {
         throw new Error('無法生成回應')

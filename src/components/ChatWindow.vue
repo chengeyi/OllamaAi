@@ -32,7 +32,12 @@
           <span class="role-badge" :class="message.role">
             {{ message.role === 'user' ? '你' : 'AI' }}
           </span>
-          <p>{{ message.content }}</p>
+          <div class="message-bubble">
+            <!-- 顯示圖片（如果有的話） -->
+            <img v-if="message.imageData" :src="message.imageData" :alt="message.imageName" class="message-image" />
+            <!-- 顯示文本內容 -->
+            <p v-if="message.content">{{ message.content }}</p>
+          </div>
         </div>
         <small class="timestamp">
           {{ formatTime(message.timestamp) }}
@@ -47,21 +52,56 @@
 
     <div class="chat-input-area">
       <input
-        v-model="chat.inputValue.value"
-        @keydown.enter="handleSendMessage"
-        type="text"
-        placeholder="輸入你的問題..."
-        :disabled="chat.isLoading.value"
-        class="chat-input"
+        ref="fileInput"
+        type="file"
+        accept="image/*"
+        @change="handleImageUpload"
+        style="display: none"
       />
       <button
+        @click="() => fileInput?.click()"
+        :disabled="chat.isLoading.value"
+        class="image-btn"
+        title="上傳圖片"
+      >
+        🖼️ 圖片
+      </button>
+      <input
+        v-model="chat.inputValue.value"
+        type="text"
+        placeholder="輸入你的問題..."
+        :disabled="chat.isLoading.value || isRecording"
+        class="chat-input"
+        ref="inputRef"
+        @keydown="handleKeydown"
+        @compositionstart="isComposing = true"
+        @compositionend="isComposing = false"
+      />
+      <button
+        @click="toggleVoiceInput"
+        :disabled="chat.isLoading.value"
+        :class="{ recording: isRecording }"
+        class="voice-btn"
+        :title="isRecording ? '停止錄音' : '開始語音輸入'"
+      >
+        {{ isRecording ? '⏹️ 停止' : '🎤 語音' }}
+      </button>
+      <button
         @click="handleSendMessage"
-        :disabled="!chat.inputValue.value.trim() || chat.isLoading.value"
+        :disabled="(!chat.inputValue.value.trim() && !uploadedImage) || chat.isLoading.value"
         class="send-btn"
       >
         <span v-if="!chat.isLoading.value">發送</span>
         <span v-else>等待中...</span>
       </button>
+    </div>
+
+    <div v-if="uploadedImage" class="image-preview">
+      <div class="preview-item">
+        <img :src="uploadedImage" :alt="uploadedImageName" />
+        <button @click="clearImage" class="remove-btn" title="移除圖片">✕</button>
+      </div>
+      <span class="preview-text">{{ uploadedImageName }}</span>
     </div>
   </div>
 </template>
@@ -75,6 +115,102 @@ const chat = useChat()
 const messagesContainer = ref<HTMLElement>()
 const { trigger: triggerClearAnimation } = useAnimation(300)
 
+// 語音輸入相關
+const isRecording = ref(false)
+let recognition: any = null
+
+// 圖片上傳相關
+const fileInput = ref<HTMLInputElement>()
+const uploadedImage = ref<string>('')
+const uploadedImageName = ref<string>('')
+
+// 處理圖片上傳
+function handleImageUpload(event: Event) {
+  console.log('📁 圖片上傳事件觸發:', event)
+  const target = event.target as HTMLInputElement
+  const files = target.files
+  if (!files || files.length === 0) return
+
+  const file = files[0]
+  console.log('📁 上傳的文件:', file)
+  uploadedImageName.value = file.name
+
+  // 檢查文件大小（限制為 5MB）
+  if (file.size > 5 * 1024 * 1024) {
+    chat.error.value = '圖片大小不能超過 5MB'
+    return
+  }
+
+  // 讀取圖片為 Data URL
+  const reader = new FileReader()
+  reader.onload = (e: ProgressEvent<FileReader>) => {
+    console.log('📁 圖片讀取完成:', e)
+    if (e.target?.result) {
+      uploadedImage.value = e.target.result as string
+    }
+  }
+  reader.readAsDataURL(file)
+
+  // 清空輸入框
+  if (target) {
+    target.value = ''
+  }
+}
+
+// 移除圖片
+function clearImage() {
+  uploadedImage.value = ''
+  uploadedImageName.value = ''
+}
+
+// 初始化語音識別
+function initVoiceRecognition() {
+  const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
+  if (!SpeechRecognition) {
+    alert('您的瀏覽器不支援語音識別功能')
+    return
+  }
+
+  recognition = new SpeechRecognition()
+  recognition.lang = 'zh-TW'
+  recognition.continuous = false
+  recognition.interimResults = true
+
+  recognition.onstart = () => {
+    isRecording.value = true
+  }
+
+  recognition.onresult = (event: any) => {
+    let transcript = ''
+    for (let i = event.resultIndex; i < event.results.length; i++) {
+      transcript += event.results[i][0].transcript
+    }
+    chat.inputValue.value = transcript
+  }
+
+  recognition.onerror = (event: any) => {
+    console.error('語音識別錯誤:', event.error)
+    chat.error.value = `語音識別錯誤: ${event.error}`
+  }
+
+  recognition.onend = () => {
+    isRecording.value = false
+  }
+}
+
+function toggleVoiceInput() {
+  if (!recognition) {
+    initVoiceRecognition()
+  }
+
+  if (isRecording.value) {
+    recognition.stop()
+  } else {
+    chat.inputValue.value = ''
+    recognition.start()
+  }
+}
+
 watch(
   () => chat.messages.value.length,
   async () => {
@@ -85,10 +221,44 @@ watch(
   }
 )
 
+const inputRef = ref<HTMLInputElement | null>(null)
 function handleSendMessage() {
-  if (chat.inputValue.value.trim()) {
-    chat.sendMessage(chat.inputValue.value)
+  // inputRef.value?.blur()
+  // 從 v-model 獲取輸入值
+  const inputValue = chat.inputValue.value || ''
+  const hasText = inputValue.trim()
+  const hasImage = uploadedImage.value
+
+  console.log('🔍 當前狀態:', { 
+    inputValue, 
+    inputValueLength: inputValue.length,
+    hasText: !!hasText, 
+    hasImage: !!hasImage,
+    uploadedImageName: uploadedImageName.value 
+  })
+
+  if (!hasText && !hasImage) {
+    console.warn('⚠️ 沒有文字也沒有圖片，退出發送')
+    return
   }
+
+  // 保存文本內容（在清空之前）
+  const messageText = inputValue.trim()
+  const imageData = uploadedImage.value
+  const imageName = uploadedImageName.value
+
+  console.log('📤 準備發送消息:', { 
+    messageText: `"${messageText}"`,
+    messageTextLength: messageText.length,
+    hasImage: !!imageData, 
+    imageName 
+  })
+  // return
+  // 發送消息（可包含文本和圖片）
+  chat.sendMessage(messageText, imageData, imageName)
+  
+  // 清空圖片
+  clearImage()
 }
 
 function handleClearChat() {
@@ -104,20 +274,37 @@ function formatTime(date: Date) {
     minute: '2-digit'
   })
 }
+
+
+const isComposing = ref(false)
+
+function handleKeydown(e: KeyboardEvent) {
+  // 1️⃣ 還在輸入法組字 → 一律忽略
+  if (isComposing.value) return
+
+  // 2️⃣ 不是 Enter → 忽略
+  if (e.key !== 'Enter') return
+
+  // 3️⃣ Enter + Shift → 換行（可選）
+  if (e.shiftKey) return
+
+  e.preventDefault()
+  handleSendMessage()
+}
 </script>
 
 <style scoped>
 .chat-container {
   display: flex;
   flex-direction: column;
-  width: 100%;
-  max-width: 600px;
-  height: 600px;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  border-radius: 12px;
-  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+  height: 100vh;
+  background: linear-gradient(135deg, #1a1a3f 0%, #0f0f23 100%);
+  border: 1px solid rgba(102, 126, 234, 0.3);
+  border-radius: 16px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5), 0 0 40px rgba(102, 126, 234, 0.15);
   overflow: hidden;
   animation: slideIn 0.4s ease-out;
+  backdrop-filter: blur(10px);
 }
 
 @keyframes slideIn {
@@ -136,31 +323,38 @@ function formatTime(date: Date) {
   justify-content: space-between;
   align-items: center;
   padding: 1.5rem;
-  background: rgba(255, 255, 255, 0.1);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.2);
-  color: white;
+  background: rgba(102, 126, 234, 0.1);
+  border-bottom: 1px solid rgba(102, 126, 234, 0.2);
+  color: #e0e0e0;
 }
 
 .chat-header h2 {
   margin: 0;
   font-size: 1.25rem;
   font-weight: 600;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
 }
 
 .clear-btn {
   padding: 0.5rem 1rem;
-  background: rgba(255, 255, 255, 0.2);
-  color: white;
-  border: 1px solid rgba(255, 255, 255, 0.3);
+  background: rgba(102, 126, 234, 0.15);
+  color: #a8c5f8;
+  border: 1px solid rgba(102, 126, 234, 0.3);
   border-radius: 6px;
   cursor: pointer;
   font-size: 0.875rem;
   transition: all 0.3s ease;
+  font-weight: 500;
 }
 
 .clear-btn:hover {
-  background: rgba(255, 255, 255, 0.3);
-  transform: scale(1.05);
+  background: rgba(102, 126, 234, 0.25);
+  border-color: rgba(102, 126, 234, 0.6);
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(102, 126, 234, 0.2);
 }
 
 .chat-messages {
@@ -170,20 +364,25 @@ function formatTime(date: Date) {
   display: flex;
   flex-direction: column;
   gap: 1rem;
-  background: white;
+  background: rgba(15, 15, 35, 0.5);
 }
 
 .chat-messages::-webkit-scrollbar {
-  width: 6px;
+  width: 8px;
 }
 
 .chat-messages::-webkit-scrollbar-track {
-  background: #f1f1f1;
+  background: rgba(102, 126, 234, 0.05);
+  border-radius: 4px;
 }
 
 .chat-messages::-webkit-scrollbar-thumb {
-  background: #667eea;
-  border-radius: 3px;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  border-radius: 4px;
+}
+
+.chat-messages::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(135deg, #7a8ff5 0%, #8356b8 100%);
 }
 
 .empty-state {
@@ -192,25 +391,26 @@ function formatTime(date: Date) {
   align-items: center;
   justify-content: center;
   height: 100%;
-  color: #999;
+  color: #8899cc;
   text-align: center;
 }
 
 .empty-state p {
   font-size: 1.125rem;
   margin: 0 0 0.5rem 0;
+  color: #a8c5f8;
 }
 
 .empty-state small {
-  color: #bbb;
+  color: #6b7fa0;
 }
 
 .error-banner {
   padding: 0.75rem 1rem;
-  background: #fee;
+  background: rgba(244, 67, 54, 0.15);
   border-left: 4px solid #f44;
   border-radius: 4px;
-  color: #c33;
+  color: #ff8a80;
   font-size: 0.875rem;
   animation: slideIn 0.3s ease-out;
 }
@@ -267,13 +467,13 @@ function formatTime(date: Date) {
 }
 
 .role-badge.user {
-  background: #667eea;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
   color: white;
 }
 
 .role-badge.assistant {
-  background: #f0f0f0;
-  color: #667eea;
+  background: rgba(102, 126, 234, 0.15);
+  color: #a8c5f8;
 }
 
 .message p {
@@ -285,20 +485,37 @@ function formatTime(date: Date) {
 }
 
 .message.user p {
-  background: #667eea;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
   color: white;
   border-bottom-right-radius: 4px;
+  box-shadow: 0 4px 12px rgba(102, 126, 234, 0.2);
 }
 
 .message.assistant p {
-  background: #f0f0f0;
-  color: #333;
+  background: rgba(102, 126, 234, 0.1);
+  color: #e0e0e0;
+  border: 1px solid rgba(102, 126, 234, 0.2);
   border-bottom-left-radius: 4px;
+}
+
+.message-bubble {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.message-image {
+  max-width: 300px;
+  max-height: 300px;
+  border-radius: 8px;
+  border: 1px solid rgba(102, 126, 234, 0.3);
+  object-fit: cover;
+  animation: messageAppear 0.3s ease-out;
 }
 
 .timestamp {
   font-size: 0.75rem;
-  color: #999;
+  color: #6b7fa0;
   padding: 0 0.5rem;
 }
 
@@ -307,15 +524,16 @@ function formatTime(date: Date) {
   align-items: center;
   gap: 0.75rem;
   padding: 1rem;
-  background: #f9f9f9;
+  background: rgba(102, 126, 234, 0.1);
+  border: 1px solid rgba(102, 126, 234, 0.2);
   border-radius: 12px;
-  color: #667eea;
+  color: #a8c5f8;
 }
 
 .loading-spinner {
   width: 16px;
   height: 16px;
-  border: 2px solid #f0f0f0;
+  border: 2px solid rgba(102, 126, 234, 0.3);
   border-top-color: #667eea;
   border-radius: 50%;
   animation: spin 0.8s linear infinite;
@@ -329,31 +547,39 @@ function formatTime(date: Date) {
 
 .chat-input-area {
   display: flex;
+  align-items: center;
   gap: 0.75rem;
   padding: 1rem;
-  background: white;
-  border-top: 1px solid #e0e0e0;
+  background: rgba(26, 26, 63, 0.8);
+  border-top: 1px solid rgba(102, 126, 234, 0.2);
 }
 
 .chat-input {
   flex: 1;
   padding: 0.75rem 1rem;
-  border: 1px solid #e0e0e0;
+  border: 1px solid rgba(102, 126, 234, 0.3);
   border-radius: 6px;
   font-size: 0.95rem;
   font-family: inherit;
+  background: rgba(102, 126, 234, 0.05);
+  color: #e0e0e0;
   transition: all 0.3s ease;
+}
+
+.chat-input::placeholder {
+  color: #6b7fa0;
 }
 
 .chat-input:focus {
   outline: none;
   border-color: #667eea;
-  box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+  background: rgba(102, 126, 234, 0.1);
+  box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.15);
 }
 
 .chat-input:disabled {
-  background: #f5f5f5;
-  color: #999;
+  background: rgba(102, 126, 234, 0.05);
+  color: #6b7fa0;
 }
 
 .send-btn {
@@ -380,5 +606,125 @@ function formatTime(date: Date) {
 .send-btn:disabled {
   opacity: 0.6;
   cursor: not-allowed;
+}
+
+.voice-btn {
+  padding: 0.75rem 1rem;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: 600;
+  transition: all 0.3s ease;
+  flex-shrink: 0;
+}
+
+.voice-btn:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: 0 10px 20px rgba(102, 126, 234, 0.3);
+}
+
+.voice-btn:active:not(:disabled) {
+  transform: translateY(0);
+}
+
+.voice-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.voice-btn.recording {
+  background: linear-gradient(135deg, #f44 0%, #ff6b6b 100%);
+  animation: pulse-recording 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse-recording {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(244, 67, 54, 0.7);
+  }
+  50% {
+    box-shadow: 0 0 0 6px rgba(244, 67, 54, 0.3);
+  }
+}
+
+.image-btn {
+  padding: 0.75rem 1rem;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: 600;
+  transition: all 0.3s ease;
+  flex-shrink: 0;
+}
+
+.image-btn:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: 0 10px 20px rgba(102, 126, 234, 0.3);
+}
+
+.image-btn:active:not(:disabled) {
+  transform: translateY(0);
+}
+
+.image-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.image-preview {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.75rem 1rem;
+  background: rgba(102, 126, 234, 0.1);
+  border: 1px solid rgba(102, 126, 234, 0.3);
+  border-radius: 6px;
+  margin-bottom: 0.75rem;
+}
+
+.preview-item {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.preview-item img {
+  width: 60px;
+  height: 60px;
+  object-fit: cover;
+  border-radius: 4px;
+  border: 1px solid rgba(102, 126, 234, 0.3);
+}
+
+.remove-btn {
+  position: absolute;
+  top: -8px;
+  right: -8px;
+  width: 24px;
+  height: 24px;
+  background: linear-gradient(135deg, #f44 0%, #ff6b6b 100%);
+  color: white;
+  border: none;
+  border-radius: 50%;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: bold;
+  transition: all 0.3s ease;
+}
+
+.remove-btn:hover {
+  transform: scale(1.1);
+  box-shadow: 0 4px 12px rgba(244, 67, 54, 0.3);
+}
+
+.preview-text {
+  flex: 1;
+  color: #a8c5f8;
+  font-size: 0.875rem;
+  word-break: break-all;
 }
 </style>
